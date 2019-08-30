@@ -2,17 +2,24 @@ module Data.Undoable where
 
 import Prelude
 
+import Data.Array as Array
 import Data.Collapsable (class Collapsable, collapse)
-import Data.List (List(..))
-import Data.List as List
 import Data.Group (class Group, ginverse)
-import Data.Maybe (Maybe(..), fromMaybe)
-import Data.Monoid.Action (class Action, act)
 import Data.Lens (Lens', lens)
 import Data.Lens.Record (prop)
+import Data.List (List(..))
+import Data.List as List
+import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Monoid.Action (class Action, act)
 import Data.Symbol (SProxy(..))
+import Data.Generic.Rep (class Generic)
+import Foreign.Class (class Encode, class Decode)
+import Foreign.Generic (genericEncode, genericDecode, defaultOptions)
 
--- TODO: does Undoable really need to hold the val state?
+
+-- | A whole bunch of boilerplate to use generic JSON serialisation/deserialisation
+
+
 type UndoableInner val action
   = { current :: val
     , history :: List action
@@ -36,6 +43,14 @@ _undone = _Undoable <<< prop (SProxy :: SProxy "undone")
 
 initUndoable :: forall val action. val -> Undoable val action
 initUndoable val = Undoable { current : val, history : Nil, undone : Nil }
+
+mapActions :: forall val action action'. (action -> action') -> Undoable val action -> Undoable val action'
+mapActions f (Undoable undoable) =
+  Undoable
+  { current : undoable.current
+  , history : map f undoable.history
+  , undone : map f undoable.undone
+  }
 
 -- | Don't reset the record of undone actions when doing a new action.
 -- | This means you can undo some actions, do some more actions,
@@ -92,3 +107,43 @@ redo (Undoable undoState) =
         , history : Cons lastUndoneAction undoState.history
         , undone : restUndone
         }
+
+
+------
+-- Serialisation/deserialisation
+
+newtype ForeignUndoable val action =
+  ForeignUndoable
+  { current :: val
+  , history :: Array action
+  , undone :: Array action
+  }
+derive instance genericForeignUndoable :: Generic (ForeignUndoable val action) _
+instance encodeForeignUndoable :: (Encode val, Encode action) => Encode (ForeignUndoable val action) where
+  encode = genericEncode defaultOptions
+instance decodeForeignUndoable :: (Decode val, Decode action) => Decode (ForeignUndoable val action) where
+  decode = genericDecode defaultOptions
+
+toForeign :: forall val action. Undoable val action -> ForeignUndoable val action
+toForeign (Undoable undoable) =
+  ForeignUndoable
+  { current : undoable.current
+  , history : Array.fromFoldable undoable.history
+  , undone : Array.fromFoldable undoable.undone
+  }
+
+fromForeign :: forall val action. ForeignUndoable val action -> Undoable val action
+fromForeign (ForeignUndoable foreignUndoable) =
+  Undoable
+  { current : foreignUndoable.current
+  , history : List.fromFoldable foreignUndoable.history
+  , undone : List.fromFoldable foreignUndoable.undone
+  }
+
+derive instance genericUndoable :: Generic (Undoable val action) _
+
+instance encodeUndoable :: (Encode val, Encode action) => Encode (Undoable val action) where
+  encode = toForeign >>> genericEncode defaultOptions
+
+instance decodeUndoable :: (Decode val, Decode action) => Decode (Undoable val action) where
+  decode = map fromForeign <<< genericDecode defaultOptions
