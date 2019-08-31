@@ -16,9 +16,9 @@ import Data.Generic.Rep (class Generic)
 import Foreign.Class (class Encode, class Decode)
 import Foreign.Generic (genericEncode, genericDecode, defaultOptions)
 
-
--- | A whole bunch of boilerplate to use generic JSON serialisation/deserialisation
-
+-- | Store the actions performed on your state so that they can be undone.
+-- |
+-- | Requires actions to be undoable, i.e. have a group structure.
 
 type UndoableInner val action
   = { current :: val
@@ -26,8 +26,7 @@ type UndoableInner val action
     , undone :: List action
     }
 
-newtype Undoable val action
-  = Undoable (UndoableInner val action)
+newtype Undoable val action = Undoable (UndoableInner val action)
 
 _Undoable :: forall v a. Lens' (Undoable v a) (UndoableInner v a)
 _Undoable = lens (\(Undoable a) -> a) (\_ -> Undoable)
@@ -52,6 +51,13 @@ mapActions f (Undoable undoable) =
   , undone : map f undoable.undone
   }
 
+-- | Perform an action and record it in the history.
+-- |
+-- | Actions can be defined to collapse together to be represented in
+-- | history as a single action. For example, drag-actions can be
+-- | collapsed together so that the entire drag motion can be undone with
+-- | a single undo.
+-- |
 -- | Don't reset the record of undone actions when doing a new action.
 -- | This means you can undo some actions, do some more actions,
 -- | Then redo the old undone actions.
