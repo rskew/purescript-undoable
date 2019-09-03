@@ -5,12 +5,13 @@ import Prelude
 import Data.Array as Array
 import Data.Collapsable (class Collapsable, collapse)
 import Data.Group (class Group, ginverse)
-import Data.Lens (Lens', lens)
+import Data.Identity (Identity(..))
+import Data.Lens (Lens, Lens', lens)
 import Data.Lens.Record (prop)
 import Data.List (List(..))
 import Data.List as List
 import Data.Maybe (Maybe(..), fromMaybe)
-import Data.Monoid.Action (class Action, act)
+import Data.Monoid.Action (class Action, class ActionM, actM)
 import Data.Symbol (SProxy(..))
 import Data.Generic.Rep (class Generic)
 import Foreign.Class (class Encode, class Decode)
@@ -28,10 +29,10 @@ type UndoableInner val action
 
 newtype Undoable val action = Undoable (UndoableInner val action)
 
-_Undoable :: forall v a. Lens' (Undoable v a) (UndoableInner v a)
+_Undoable :: forall v v' a a'. Lens (Undoable v a) (Undoable v' a') (UndoableInner v a) (UndoableInner v' a')
 _Undoable = lens (\(Undoable a) -> a) (\_ -> Undoable)
 
-_current :: forall v a. Lens' (Undoable v a) v
+_current :: forall v v' a. Lens (Undoable v a) (Undoable v' a) v v'
 _current = _Undoable <<< prop (SProxy :: SProxy "current")
 
 _history :: forall v a. Lens' (Undoable v a) (List a)
@@ -63,9 +64,9 @@ mapActions f (Undoable undoable) =
 -- | Then redo the old undone actions.
 -- |
 -- | This may not be good or intuitive and may change in future versions :upside_down_face:
-doo :: forall val action. Action action val => Group action => Collapsable action =>
-       action -> Undoable val action -> Undoable val action
-doo action (Undoable undoState) =
+dooM :: forall m val action. ActionM m action val => Group action => Collapsable action =>
+        action -> Undoable val action -> m (Undoable val action)
+dooM action (Undoable undoState) =
   let
     -- Collapse action with the last recorded action if possible
     maybeCollapsedHistory = do
@@ -75,44 +76,71 @@ doo action (Undoable undoState) =
     history = fromMaybe
               (Cons action undoState.history)
               maybeCollapsedHistory
-  in
-    Undoable
-    { current : act action undoState.current
-    , history : history
-    , undone : undoState.undone
-    }
+  in do
+    updatedState <- actM action undoState.current
+    pure $ Undoable
+           { current : updatedState
+           , history : history
+           , undone : undoState.undone
+           }
 
-undo :: forall val action. Action action val => Group action =>
-        Undoable val action -> Undoable val action
-undo (Undoable undoState) =
+doo :: forall action val. Action action val => Group action => Collapsable action =>
+       action -> Undoable val action -> Undoable val action
+doo action undoState =
+  let
+    Identity updatedUndoable = dooM action undoState
+  in
+    updatedUndoable
+
+undoM :: forall m val action. ActionM m action val => Group action =>
+         Undoable val action -> m (Undoable val action)
+undoM (Undoable undoState) =
   case List.uncons undoState.history of
-    Nothing -> Undoable undoState
+    Nothing -> pure $ Undoable undoState
     Just history ->
       let
         lastAction = history.head
         restHistory = history.tail
-      in
-        Undoable
-        { current : act (ginverse lastAction) undoState.current
-        , history : restHistory
-        , undone : Cons lastAction undoState.undone
-        }
+      in do
+        updatedState <- actM (ginverse lastAction) undoState.current
+        pure $ Undoable
+               { current : updatedState
+               , history : restHistory
+               , undone : Cons lastAction undoState.undone
+               }
 
-redo :: forall val action. Action action val => Group action =>
-        Undoable val action -> Undoable val action
-redo (Undoable undoState) =
+undo :: forall action val. Action action val => Group action =>
+         Undoable val action -> Undoable val action
+undo undoState =
+  let
+    Identity updatedUndoable = undoM undoState
+  in
+    updatedUndoable
+
+redoM :: forall m val action. ActionM m action val => Group action =>
+         Undoable val action -> m (Undoable val action)
+redoM (Undoable undoState) =
   case List.uncons undoState.undone of
-    Nothing -> Undoable undoState
+    Nothing -> pure $ Undoable undoState
     Just undone ->
       let
         lastUndoneAction = undone.head
         restUndone = undone.tail
-      in
-        Undoable
-        { current : act lastUndoneAction undoState.current
-        , history : Cons lastUndoneAction undoState.history
-        , undone : restUndone
-        }
+      in do
+        updatedState <- actM lastUndoneAction undoState.current
+        pure $ Undoable
+               { current : updatedState
+               , history : Cons lastUndoneAction undoState.history
+               , undone : restUndone
+               }
+
+redo :: forall action val. Action action val => Group action =>
+        Undoable val action -> Undoable val action
+redo undoState =
+  let
+    Identity updatedUndoable = redoM undoState
+  in
+    updatedUndoable
 
 
 ------
