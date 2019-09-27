@@ -8,14 +8,15 @@ You can edit this file as you like.
     [ "assert"
     , "console"
     , "effect"
-    , "prelude"
-    , "psci-support"
-    , "maybe"
-    , "tuples"
-    , "profunctor-lenses"
-    , "group"
-    , "generics-rep"
     , "foreign-generic"
+    , "generics-rep"
+    , "group"
+    , "maybe"
+    , "prelude"
+    , "profunctor-lenses"
+    , "psci-support"
+    , "run"
+    , "tuples"
     ]
 , packages =
     ./packages.dhall
